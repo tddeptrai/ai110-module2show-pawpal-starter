@@ -1,15 +1,74 @@
 classDiagram
-    %% Replace the placeholders below with your actual classes, attributes, methods, and relationships.
-    %% Keep this file updated so it matches your final implementation.
+    %% PawPal+ class design (draft). Keep this file updated so it matches your final implementation.
 
-    class ClassName {
-        +type attribute
-        +method() returnType
+    class Owner {
+        +str name
+        +int available_minutes
+        +dict preferences
+        +list~Pet~ pets
+        +add_pet(pet: Pet) None
+        +remove_pet(pet_name: str) None
+        +get_all_tasks() list~Task~
     }
 
-    class AnotherClass {
-        +type attribute
-        +method() returnType
+    class Pet {
+        +str name
+        +str species
+        +str breed
+        +int age
+        +str special_needs
+        +list~Task~ tasks
+        +add_task(task: Task) None
+        +edit_task(title: str, **changes) None
+        +remove_task(title: str) None
+        +get_pending_tasks() list~Task~
     }
 
-    ClassName --> AnotherClass : relationship
+    class Task {
+        +str title
+        +int duration_minutes
+        +str priority
+        +str category
+        +str preferred_time
+        +str frequency
+        +bool completed
+        +date due_date
+        +str pet_name
+        +priority_value() int
+        +is_due(day: date) bool
+        +mark_complete() Task
+    }
+
+    class Scheduler {
+        +Owner owner
+        +str day_start
+        +generate_plan(day: date) Schedule
+        +sort_tasks(tasks: list~Task~) list~Task~
+        +filter_tasks(tasks: list~Task~, day: date) list~Task~
+        +detect_conflicts(items: list~ScheduledItem~) list~str~
+        +apply_preferences(tasks: list~Task~) list~Task~
+    }
+
+    class Schedule {
+        +date day
+        +list~ScheduledItem~ items
+        +list~Task~ skipped
+        +dict skip_reasons
+        +list~str~ warnings
+        +total_minutes() int
+        +explain() str
+    }
+
+    class ScheduledItem {
+        +Task task
+        +str start_time
+        +str end_time
+        +str reason
+    }
+
+    Owner "1" o-- "*" Pet : owns
+    Pet "1" *-- "*" Task : has
+    Scheduler --> Owner : reads constraints from
+    Scheduler ..> Schedule : creates
+    Schedule "1" *-- "*" ScheduledItem : contains
+    ScheduledItem --> Task : wraps
