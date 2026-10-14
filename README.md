@@ -42,16 +42,56 @@ pip install -r requirements.txt
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
 
+## 🛠️ Implementation Summary
+
+All scheduling logic lives in `pawpal_system.py`. The classes are split into data, logic, and output (see `diagrams/uml.mmd`):
+
+- **`Owner`** holds the daily time budget (`available_minutes`), preferences, and a list of **`Pet`**s.
+- **`Pet`** owns its **`Task`**s and can add, edit, and remove them.
+- **`Task`** is one care activity with a duration, priority, optional fixed time, and frequency. `mark_complete()` returns the next occurrence for daily/weekly tasks.
+- **`Scheduler`** turns an `Owner` into a **`Schedule`** in `generate_plan()`:
+  1. **Filter** to tasks that are due today and not done.
+  2. **Order** them: favorite categories first, then by priority (ties go to the shorter task).
+  3. **Choose** tasks in that order while they fit the remaining time; the rest are skipped with a reason.
+  4. **Place** fixed-time tasks at their time, then fill the gaps with flexible tasks from 08:00.
+  5. **Check** for overlapping time slots and add warnings (see Smarter Scheduling below).
+- **`Schedule`** holds the placed **`ScheduledItem`**s (task + start/end time + reason), the skipped tasks, and warnings. `explain()` prints why each task was chosen or skipped.
+
+`main.py` is a terminal demo that builds a sample owner with two pets, shows sorting, filtering, and recurring tasks, then prints today's schedule with any conflict warnings.
+
 ## 🖥️ Sample Output
 
-Paste a sample of your app's CLI or Streamlit output here so a reader can see what a generated plan looks like:
+`python main.py` first demos sorting, recurring tasks, and filtering, then prints the plan. Owner Jordan has 90 minutes free and two pets. Two clashes are added on purpose to show conflict warnings:
 
 ```
-# e.g.:
-# Daily plan for Biscuit (Golden Retriever):
-#   08:00 — Morning walk (30 min) [priority: high]
-#   09:00 — Feeding (10 min) [priority: high]
-#   ...
+Today's Schedule for Jordan - Wednesday, Oct 14 2026
+====================================================
+Time          Pet     Task              Min  Priority
+----------------------------------------------------
+07:15-07:25   Luna    Litter box         10  medium
+08:00-08:30   Mochi   Morning walk       30  high
+08:30-08:45   Mochi   Brushing           15  low
+09:00-09:05   Mochi   Ear drops           5  high
+09:00-09:05   Luna    Medication          5  high
+18:30-18:35   Luna    Brush teeth         5  medium
+18:30-18:50   Luna    Playtime           20  medium
+----------------------------------------------------
+Planned: 90 of 90 min available
+
+Why this plan:
+  - Litter box (Luna): medium priority, fixed at 07:15
+  - Morning walk (Mochi): high priority, fits in available time
+  - Brushing (Mochi): low priority, fits in available time
+  - Ear drops (Mochi): high priority, fixed at 09:00
+  - Medication (Luna): high priority, fixed at 09:00
+  - Brush teeth (Luna): medium priority, fixed at 18:30
+  - Playtime (Luna): medium priority, fixed at 18:30
+  ! Conflict (Mochi and Luna): Ear drops 09:00-09:05 overlaps Medication 09:00-09:05
+  ! Conflict (same pet: Luna): Brush teeth 18:30-18:35 overlaps Playtime 18:30-18:50
+
+WARNING: 2 scheduling conflict(s) found:
+  - Conflict (Mochi and Luna): Ear drops 09:00-09:05 overlaps Medication 09:00-09:05
+  - Conflict (same pet: Luna): Brush teeth 18:30-18:35 overlaps Playtime 18:30-18:50
 ```
 
 ## 🧪 Testing PawPal+
@@ -72,14 +112,22 @@ Sample test output:
 
 ## 📐 Smarter Scheduling
 
-> Fill in once you've implemented scheduling logic.
+All of these live on `Scheduler` and `Task` in `pawpal_system.py`, are exercised by `python main.py`, and are covered in `tests/test_pawpal.py`.
 
 | Feature | Method(s) | Notes |
 |---------|-----------|-------|
-| Task sorting | | e.g., by priority, duration |
-| Filtering | | e.g., skip tasks if time runs out |
-| Conflict handling | | e.g., overlapping time slots |
-| Recurring tasks | | e.g., daily vs. weekly |
+| Task sorting | `Scheduler.sort_by_time()`, `Scheduler.sort_tasks()` | By "HH:MM" time (untimed last), or by priority then shortest first |
+| Filtering | `Scheduler.filter_by()`, `Scheduler.filter_tasks()` | By pet name and/or completion status; by "due today" |
+| Conflict handling | `Scheduler.detect_conflicts()` | Warns on overlapping time slots, for the same pet or different pets |
+| Recurring tasks | `Scheduler.mark_task_complete()`, `Task.mark_complete()` | Daily tasks repeat +1 day, weekly +7 days, via `timedelta` |
+
+**Sorting: `Scheduler.sort_by_time(tasks)`.** Returns tasks in clock order using `sorted()` with a key of `(has no usable time, minutes after midnight)`. Times are converted with `to_minutes()` rather than compared as strings, and flexible tasks (or ones with an unreadable time) go to the end. `sort_tasks()` is the ordering the planner uses: highest priority first, ties going to the shorter task.
+
+**Filtering: `Scheduler.filter_by(pet_name=None, completed=None)`.** Returns the owner's tasks matching a pet, a completion status, or both, so `filter_by("Mochi", completed=False)` answers "what does Mochi still need?" A filter left as `None` is ignored. `filter_tasks(tasks, day)` keeps only tasks that are due and not done, and is the first step of `generate_plan()`.
+
+**Conflict detection: `Scheduler.detect_conflicts(items)`.** After the plan is built, items are sorted by start time and each one is compared with the ones after it until a later item starts after it ends. Any overlap of the start–end ranges (not just identical start times) produces a warning that names the pets, e.g. `Conflict (same pet: Luna): Brush teeth 18:30-18:35 overlaps Playtime 18:30-18:50`. Back-to-back tasks (08:00–08:10 then 08:10–08:20) are not conflicts. It is deliberately lightweight: it never raises an error or reschedules anything. Warnings are stored in `Schedule.warnings` and shown by `Schedule.explain()`. Similarly, a task with an invalid time like `"9am"` gets a warning and is scheduled as flexible instead of crashing the plan.
+
+**Recurring tasks: `Scheduler.mark_task_complete(pet_name, title)`.** Marks the pet's pending task done by calling `Task.mark_complete()`. For `"daily"` or `"weekly"` tasks, that returns a fresh copy due one `timedelta(days=1)` or `timedelta(weeks=1)` later, and the scheduler adds it to the same pet. The next date counts from today or the current due date, whichever is later, so an overdue task doesn't come back already overdue and a task finished early doesn't create a duplicate. One-time tasks return `None`.
 
 ## 📸 Demo Walkthrough
 
