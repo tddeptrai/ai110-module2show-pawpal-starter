@@ -217,6 +217,16 @@ def test_three_tasks_at_same_time_report_every_pair():
     assert len(plan.warnings) == 3
 
 
+def test_find_conflicts_returns_the_overlapping_pairs():
+    owner = make_owner(("Mochi", Task("Walk", 30, "high", preferred_time="08:00")),
+                       ("Luna", Task("Meds", 5, "high", preferred_time="08:15")),
+                       ("Luna", Task("Play", 10, "low", preferred_time="10:00")))
+    scheduler = Scheduler(owner)
+    plan = scheduler.generate_plan(TODAY)
+    pairs = scheduler.find_conflicts(plan.items)
+    assert [(a.task.title, b.task.title) for a, b in pairs] == [("Walk", "Meds")]
+
+
 def test_back_to_back_tasks_are_not_a_conflict():
     plan = plan_for(("Mochi", Task("Feed", 10, "high", preferred_time="08:00")),
                     ("Mochi", Task("Walk", 30, "high", preferred_time="08:10")))

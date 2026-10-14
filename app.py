@@ -84,40 +84,104 @@ if owner.pets:
                     frequency=frequency))
                 st.success(f"Added '{task_title.strip()}' for {pet.name}.")
 
-    for pet in owner.pets:
-        st.markdown(f"**{pet.name}** ({pet.species})")
-        if pet.tasks:
-            st.table([
-                {"Task": t.title, "Minutes": t.duration_minutes, "Priority": t.priority,
-                 "Category": t.category, "Time": t.preferred_time or "flexible",
-                 "Frequency": t.frequency, "Done": "yes" if t.completed else ""}
-                for t in pet.tasks
-            ])
-        else:
-            st.caption("No tasks yet.")
+    # Task list: filtered with Scheduler.filter_by(), sorted with sort_by_time().
+    st.markdown("**All tasks**")
+    col1, col2 = st.columns(2)
+    with col1:
+        pet_filter = st.selectbox("Show pet", ["All pets"] + [p.name for p in owner.pets])
+    with col2:
+        status_filter = st.radio("Status", ["Pending", "Done", "All"], horizontal=True)
+    scheduler = Scheduler(owner)
+    shown = scheduler.sort_by_time(scheduler.filter_by(
+        pet_name=None if pet_filter == "All pets" else pet_filter,
+        completed={"Pending": False, "Done": True, "All": None}[status_filter]))
+    if shown:
+        st.caption("Sorted by time; flexible tasks are listed last.")
+        st.table([
+            {"Time": t.preferred_time or "flexible", "Pet": t.pet_name, "Task": t.title,
+             "Minutes": t.duration_minutes, "Priority": t.priority,
+             "Repeats": t.frequency, "Due": t.due_date.strftime("%b %d"),
+             "Status": "done" if t.completed else "pending"}
+            for t in shown
+        ])
+    else:
+        st.caption("No tasks match these filters.")
+
+    # Completing a daily/weekly task adds its next occurrence automatically.
+    pending = scheduler.filter_by(completed=False)
+    if pending:
+        with st.form("complete_task"):
+            labels = {f"{t.pet_name} - {t.title} (due {t.due_date:%b %d})": t for t in pending}
+            choice = st.selectbox("Mark a task complete", list(labels))
+            if st.form_submit_button("Mark complete"):
+                task = labels[choice]
+                next_task = scheduler.mark_task_complete(task.pet_name, task.title, date.today())
+                # Saved in session_state so the message survives the rerun
+                # that refreshes the task table above.
+                st.session_state.flash = (
+                    f"Done! {task.title} repeats {task.frequency}; next one is due "
+                    f"{next_task.due_date:%a, %b %d}." if next_task
+                    else f"Done! {task.title} was a one-time task.")
+                st.rerun()
+    if "flash" in st.session_state:
+        st.success(st.session_state.pop("flash"))
 
 st.divider()
 
 # --- Schedule --------------------------------------------------------------
 st.subheader("Today's Schedule")
 if st.button("Generate schedule", type="primary"):
-    schedule = Scheduler(owner).generate_plan(date.today())
+    st.session_state.show_plan = True
+
+# The plan is rebuilt on every rerun once requested, so it stays current
+# after tasks are added or completed.
+if st.session_state.get("show_plan"):
+    scheduler = Scheduler(owner)
+    schedule = scheduler.generate_plan(date.today())
+    conflicts = scheduler.find_conflicts(schedule.items)
 
     if not schedule.items and not schedule.skipped:
         st.info("Nothing to schedule today. Add some tasks first.")
     else:
-        st.metric("Planned time", f"{schedule.total_minutes()} / {owner.available_minutes} min")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Planned time", f"{schedule.total_minutes()} / {owner.available_minutes} min")
+        col2.metric("Tasks planned", len(schedule.items))
+        col3.metric("Time conflicts", len(conflicts))
+
+        # Conflicts come first and in plain language: which pets, which
+        # tasks, what time, and what to do about it. They are warnings, not
+        # errors, because the plan is still usable.
+        if conflicts:
+            st.warning(f"**{len(conflicts)} time conflict(s)** - review these before your day starts.")
+            for first, second in conflicts:
+                a, b = first.task, second.task
+                if a.pet_name == b.pet_name:
+                    st.warning(
+                        f"⏰ **{a.pet_name}** has *{a.title}* ({first.start_time}-{first.end_time}) "
+                        f"and *{b.title}* ({second.start_time}-{second.end_time}) at the same time. "
+                        f"One pet can't do both, so move one of them.")
+                else:
+                    st.warning(
+                        f"⏰ *{a.title}* for **{a.pet_name}** ({first.start_time}-{first.end_time}) "
+                        f"overlaps *{b.title}* for **{b.pet_name}** ({second.start_time}-{second.end_time}). "
+                        f"Do them together if you can, otherwise move one.")
+        else:
+            st.success("✅ No time conflicts. Every task has its own time slot.")
+
         if schedule.items:
+            clashing = {id(item) for pair in conflicts for item in pair}
             st.table([
-                {"Time": f"{i.start_time}-{i.end_time}", "Pet": i.task.pet_name,
-                 "Task": i.task.title, "Minutes": i.task.duration_minutes,
+                {"": "⚠️" if id(i) in clashing else "", "Time": f"{i.start_time}-{i.end_time}",
+                 "Pet": i.task.pet_name, "Task": i.task.title, "Minutes": i.task.duration_minutes,
                  "Priority": i.task.priority, "Why": i.reason}
                 for i in schedule.items
             ])
+
         for task in schedule.skipped:
             reason = schedule.skip_reasons[f"{task.pet_name} - {task.title}"]
-            st.warning(f"Skipped **{task.title}** ({task.pet_name}): {reason}")
+            st.info(f"Skipped **{task.title}** ({task.pet_name}): {reason}")
         for warning in schedule.warnings:
-            st.error(warning)
+            if not warning.startswith("Conflict"):
+                st.warning(warning)
         with st.expander("Plan explanation"):
             st.text(schedule.explain())

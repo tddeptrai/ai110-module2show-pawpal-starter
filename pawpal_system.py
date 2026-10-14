@@ -278,30 +278,41 @@ class Scheduler:
             pet.add_task(next_task)
         return next_task
 
-    def detect_conflicts(self, items: list[ScheduledItem]) -> list[str]:
-        """Return a warning for every pair of items whose time slots overlap.
+    def find_conflicts(self, items: list[ScheduledItem]
+                       ) -> list[tuple[ScheduledItem, ScheduledItem]]:
+        """Return every pair of items whose time slots overlap.
 
-        Lightweight by design: it never raises or reschedules anything, it
-        only reports, so the plan is still shown and the owner decides what
-        to move. Items are sorted by start time, so the inner loop can stop
-        at the first item that starts after `first` ends. Two slots overlap
-        when one starts before the other ends; back-to-back slots
-        (08:00-08:10 then 08:10-08:20) are not a conflict.
+        Items are sorted by start time, so the inner loop can stop at the
+        first item that starts after `first` ends. Two slots overlap when one
+        starts before the other ends; back-to-back slots (08:00-08:10 then
+        08:10-08:20) are not a conflict.
         """
-        warnings = []
+        pairs = []
         ordered = sorted(items, key=lambda item: to_minutes(item.start_time))
         for i, first in enumerate(ordered):
             for second in ordered[i + 1:]:
                 if to_minutes(second.start_time) >= to_minutes(first.end_time):
                     break
-                same_pet = first.task.pet_name == second.task.pet_name
-                who = (f"same pet: {first.task.pet_name}" if same_pet
-                       else f"{first.task.pet_name} and {second.task.pet_name}")
-                warnings.append(
-                    f"Conflict ({who}): {first.task.title} "
-                    f"{first.start_time}-{first.end_time} overlaps "
-                    f"{second.task.title} {second.start_time}-{second.end_time}"
-                )
+                pairs.append((first, second))
+        return pairs
+
+    def detect_conflicts(self, items: list[ScheduledItem]) -> list[str]:
+        """Return a readable warning for every overlapping pair of items.
+
+        Lightweight by design: it never raises or reschedules anything, it
+        only reports, so the plan is still shown and the owner decides what
+        to move.
+        """
+        warnings = []
+        for first, second in self.find_conflicts(items):
+            same_pet = first.task.pet_name == second.task.pet_name
+            who = (f"same pet: {first.task.pet_name}" if same_pet
+                   else f"{first.task.pet_name} and {second.task.pet_name}")
+            warnings.append(
+                f"Conflict ({who}): {first.task.title} "
+                f"{first.start_time}-{first.end_time} overlaps "
+                f"{second.task.title} {second.start_time}-{second.end_time}"
+            )
         return warnings
 
     def apply_preferences(self, tasks: list[Task]) -> list[Task]:

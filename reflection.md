@@ -32,6 +32,10 @@ Yes. When I turned the UML into Python class stubs, two small changes came up in
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
 - How did you decide which constraints mattered most?
 
+The scheduler considers five things: **time** (the owner's `available_minutes` is a hard limit, so the plan never goes over it), **due dates and completion** (only tasks that are due today and not done are planned), **priority** (high > medium > low), **owner preferences** (favorite categories are considered first), and **fixed times** (a task like 09:00 medication is placed at exactly that time, and flexible tasks fill the gaps around it).
+
+I ranked them by what would hurt a pet most if it went wrong. Time is a hard constraint because a plan the owner can't finish isn't useful. Priority comes next because missing medication is worse than missing brushing. Fixed times are respected as given, because a time usually means something real (meds, a vet visit). Preferences only reorder tasks, so they make the plan feel personal without overriding what the pet needs. Ties go to the shorter task so more care fits into the day.
+
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
@@ -69,6 +73,14 @@ I also didn't just accept the class stubs. I asked the AI to compare the code ag
 
 To verify the logic, I ran `python main.py` and checked the output by hand: the times add up to the 90-minute budget, fixed-time tasks land at their times, Playtime moved past the 09:00 medication because it didn't fit in the 10-minute gap, and the 45-minute Bath was skipped with a reason. I also ran `python -m pytest` to confirm task completion and task addition behave correctly.
 
+**c. AI strategy**
+
+- **Most effective features.** Letting the assistant read the whole project (README, `pawpal_system.py`, the UML, and the tests) before answering was the most useful thing, because its suggestions fit my existing classes instead of inventing new ones. Asking it to *compare* two things ("compare pawpal_system.py with the uml") gave me a checklist I could judge myself. Having it run `python main.py` and `python -m pytest` after each change meant every suggestion came with proof that it worked, and for the UI it drove the Streamlit app headlessly to check the conflict warnings and the mark-complete flow.
+- **A suggestion I modified.** For the conflict check I kept my sorted loop with an early `break` instead of the AI's shorter `itertools.combinations` version, and rejected the neighbour-only `zip()` version because it misses a long task that overlaps one two slots later (details above). Later, when the UI needed to know *which* tasks clash, the options were to parse the warning strings in `app.py` or to split the method. I chose the split: `find_conflicts()` returns the overlapping pairs and `detect_conflicts()` formats them, so the UI and the CLI share one overlap rule and nothing has to parse text.
+- **Separate chat sessions.** I used a separate session for each phase: design and UML, implementing the algorithms, testing, and UI plus documentation. Each session started with a clear goal and only the files it needed, so the AI's answers stayed focused (the testing session only thought about edge cases, not new features), and the commits line up with the phases (`chore: add class skeletons from UML`, `feat: implement sorting, filtering, and conflict detection`, `test: add automated test suite for PawPal+ system`).
+
+**Being the lead architect.** The AI can produce a lot of correct-looking code very quickly, which makes it easy to lose track of the design. My job was to own the structure and the trade-offs: decide which class a feature belongs in, decide that conflicts should be warnings rather than automatic fixes, reject suggestions that were clever but harder to verify, and insist on tests and real output before accepting a change. I treated the AI like a fast junior teammate: great for drafting, but every change still needed a reason, a review against the UML, and a passing test.
+
 ---
 
 ## 4. Testing and Verification
@@ -78,10 +90,24 @@ To verify the logic, I ran `python main.py` and checked the output by hand: the 
 - What behaviors did you test?
 - Why were these tests important?
 
+The suite in `tests/test_pawpal.py` has 33 tests grouped into five areas:
+
+- **Sorting:** `sort_by_time()` returns clock order (including `"9:05"` before `"10:00"`, which string sorting gets wrong), puts flexible tasks last, and keeps ties in order; `sort_tasks()` orders by priority then duration; a full plan comes out in chronological order.
+- **Recurrence:** completing a daily task creates a pending copy due tomorrow, which shows up in tomorrow's plan but not today's; weekly tasks repeat in 7 days; one-time tasks don't repeat; overdue and early completions don't create duplicates.
+- **Conflict detection:** duplicate times (same pet or two pets), partial overlaps, three-way clashes, and back-to-back tasks (which are *not* conflicts).
+- **Filtering:** by pet and status, and the plan leaves out completed and future tasks.
+- **Edge cases:** a pet with no tasks, an owner with no pets, a zero-minute budget, a task that exactly fills the budget, and bad input like a zero duration or a `"9am"` time.
+
+These matter because the scheduler's mistakes would be quiet ones. A wrong sort or an off-by-one recurrence date wouldn't crash anything; the owner would just get a plan that looks fine but is wrong, like a missed medication or a feeding listed twice. The tests pin down exact expected outputs so those mistakes get caught.
+
 **b. Confidence**
 
 - How confident are you that your scheduler works correctly?
 - What edge cases would you test next if you had more time?
+
+I'd give it 4 out of 5. All 33 tests pass, they cover every core behavior plus the edge cases I could think of, and the CLI demo and the Streamlit app both show the same results I checked by hand. I'm holding back one star because the Streamlit UI isn't covered by automated tests, and because conflicts are only reported, not resolved.
+
+Next I would test: tasks that run past midnight (e.g. a 60-minute task at 23:30), a flexible task that can't fit anywhere before the end of the day, renaming a pet after tasks are added (tasks store `pet_name` as a copy), two tasks with the same title for one pet, and a full UI test of the add-pet, add-task, and mark-complete flow using Streamlit's `AppTest`.
 
 ---
 
@@ -91,10 +117,16 @@ To verify the logic, I ran `python main.py` and checked the output by hand: the 
 
 - What part of this project are you most satisfied with?
 
+I'm most satisfied with how the conflict warnings turned out end to end. The logic is simple and correct (it compares full time ranges, so it catches partial overlaps, not just identical start times), it's backed by tests for the tricky cases like back-to-back tasks, and in the app it shows up as something a pet owner can act on: a plain-language warning naming the pets, tasks, and times, a suggestion of what to do, and ⚠️ markers on the clashing rows. I also like that every scheduled or skipped task carries a reason, so the plan never feels like a black box.
+
 **b. What you would improve**
 
 - If you had another iteration, what would you improve or redesign?
 
+I would let the owner resolve conflicts from the UI, for example a "move to next free slot" button next to each warning, instead of only reporting them. I'd also replace the greedy task selection with one that fills the time budget better (it can skip a 45-minute task that would fit if two small low-priority tasks were dropped), and save owners, pets, and tasks to a file so the data survives closing the app. In the design, I'd give each task an ID instead of finding tasks by title, since two tasks with the same name for one pet are currently ambiguous.
+
 **c. Key takeaway**
 
 - What is one important thing you learned about designing systems or working with AI on this project?
+
+Designing first made everything after it easier. Because the UML split the data (Owner, Pet, Task), the logic (Scheduler), and the output (Schedule, ScheduledItem), every new feature had an obvious home, and the AI's suggestions could be checked against that design instead of being accepted just because they ran. The AI was fastest when I gave it one clear, small step and hardest to trust when I let it decide the structure.
