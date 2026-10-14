@@ -96,19 +96,34 @@ WARNING: 2 scheduling conflict(s) found:
 
 ## 🧪 Testing PawPal+
 
-```bash
-# Run the full test suite:
-pytest
+Run the full test suite from the project root:
 
-# Run with coverage:
-pytest --cov
+```bash
+python -m pytest
 ```
+
+The 32 tests in `tests/test_pawpal.py` are grouped by behavior:
+
+- **Sorting correctness:** `sort_by_time()` returns tasks in clock order (compared as times, not strings, so `9:05` comes before `10:00`), with untimed or invalid times last and ties kept in their original order. `sort_tasks()` orders by priority, then shorter duration, and every generated plan comes out in chronological order.
+- **Recurrence logic:** completing a daily task creates a new pending task due the next day (weekly tasks repeat 7 days later; one-time tasks don't repeat). The new copy appears in tomorrow's plan, not today's. Overdue or early completions don't create duplicates.
+- **Conflict detection:** the Scheduler warns about duplicate times (same pet or different pets), partial overlaps, and every pair when three tasks clash. Back-to-back tasks are not flagged.
+- **Filtering and due dates:** `filter_by()` works by pet and/or completion status. Completed and future tasks stay out of the plan; overdue tasks are included.
+- **Edge cases:** a pet with no tasks or an owner with no pets gives an empty plan, tasks over the time budget are skipped with a reason, favorite categories win when time is short, and bad input (zero duration, unknown priority, `"9am"`) is rejected or warned about instead of crashing.
 
 Sample test output:
 
 ```
-# Paste your pytest output here
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0
+rootdir: D:\Projects\Codepath\AI110\ai110-module2show-pawpal-starter
+collected 32 items
+
+tests\test_pawpal.py ................................                    [100%]
+
+============================= 32 passed in 0.08s ==============================
 ```
+
+**Confidence Level: ⭐⭐⭐⭐ (4/5).** Every core behavior (sorting, recurrence, conflicts, filtering, time budget) is covered, including the edge cases, and all tests pass. One star is held back because the scheduler only reports conflicts instead of resolving them, and the Streamlit UI in `app.py` is checked by hand rather than by automated tests.
 
 ## 📐 Smarter Scheduling
 
